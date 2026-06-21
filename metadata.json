@@ -1,0 +1,6 @@
+{
+  "name": "DocCompare AI",
+  "description": "Aplikasi analisis perbandingan dokumen (kontrak, addendum, BOQ, RAB, invoice, SOP) berbasis kecerdasan buatan (Gemini 3.5 Flash) yang presisi dan enterprise-grade.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
