@@ -1,9 +1,12 @@
 import React, { useState } from "react";
 import { Project, Document, ComparisonReport, UserRole } from "../types";
 import { generateVisualDiffs, DiffLine } from "../utils/documentParser";
+import { jsPDF } from "jspdf";
+import * as XLSX from "xlsx";
 import { 
   Dna, ArrowRight, Sparkles, AlertTriangle, AlertCircle, CheckCircle, 
-  Download, Printer, Columns, FileText, ChevronRight, Play, Eye, RotateCcw
+  Download, Printer, Columns, FileText, ChevronRight, Play, Eye, RotateCcw,
+  BarChart3
 } from "lucide-react";
 
 interface ComparisonModuleProps {
@@ -155,61 +158,474 @@ export default function ComparisonModule({
     window.print();
   };
 
-  const handleExportCSV = () => {
+  const handleExportPDF = () => {
     if (!aiReport) return;
-    let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Tipe Perubahan,Aspek/Kategori,Nilai Lama,Nilai Baru,Tingkat Risiko\n";
+    const doc = new jsPDF();
     
-    aiReport.changes.forEach((ch) => {
-      const row = `"${ch.type}","${ch.category}","${ch.oldValue.replace(/"/g, '""')}","${ch.newValue.replace(/"/g, '""')}","${ch.risk}"`;
-      csvContent += row + "\n";
-    });
+    let y = 15;
+    const margin = 15;
+    const pageWidth = doc.internal.pageSize.width;
+    const contentWidth = pageWidth - 2 * margin; // ~180
 
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `Laporan_Perbedaan_${aiReport.docAName}_vs_${aiReport.docBName}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const checkPageBreak = (neededHeight: number) => {
+      if (y + neededHeight > doc.internal.pageSize.height - 15) {
+        doc.addPage();
+        y = 15;
+      }
+    };
+
+    const addHeader = (title: string) => {
+      checkPageBreak(12);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(30, 41, 59); // Slate-800
+      doc.text(title, margin, y);
+      y += 4;
+      doc.setDrawColor(226, 232, 240); // Slate-200
+      doc.line(margin, y, margin + contentWidth, y);
+      y += 6;
+    };
+
+    const addParagraph = (text: string) => {
+      if (!text) return;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(71, 85, 105); // Slate-600
+      const lines = doc.splitTextToSize(text, contentWidth);
+      const lineHeight = 4.5;
+      lines.forEach((line: string) => {
+        checkPageBreak(lineHeight);
+        doc.text(line, margin, y);
+        y += lineHeight;
+      });
+      y += 3;
+    };
+
+    const addBullet = (text: string) => {
+      if (!text) return;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(71, 85, 105); // Slate-600
+      const bulletPrefix = "- ";
+      const fullText = bulletPrefix + text;
+      const lines = doc.splitTextToSize(fullText, contentWidth - 4);
+      const lineHeight = 4.5;
+      lines.forEach((line: string, index: number) => {
+        checkPageBreak(lineHeight);
+        if (index === 0) {
+          doc.text(line, margin, y);
+        } else {
+          doc.text(line, margin + 4, y);
+        }
+        y += lineHeight;
+      });
+      y += 1.5;
+    };
+
+    // 1. Doc Header / Title
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(15);
+    doc.setTextColor(15, 23, 42); // Slate-900
+    doc.text("LAPORAN PERBANDINGAN DOKUMEN AI", margin, y);
+    y += 5;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184); // Slate-400
+    doc.text(`Dihasilkan oleh DocCompare AI pada ${new Date(aiReport.timestamp || "").toLocaleString("id-ID")}`, margin, y);
+    y += 9;
+
+    // Metadata Card
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(248, 250, 252); // Slate-50 background tint
+    doc.rect(margin, y, contentWidth, 31, "FD");
+    
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(51, 65, 85);
+    doc.text("METADATA ANALISA:", margin + 5, y + 5);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text(`Proyek: #${aiReport.projectId}`, margin + 5, y + 11);
+    doc.text(`Kategori: ${aiReport.category || "Umum"}`, margin + 5, y + 16);
+    doc.text(`Tingkat Risiko: ${aiReport.summary.riskLevel.toUpperCase()}`, margin + 5, y + 21);
+    doc.text(`Dokumen A (Lama): ${aiReport.docAName}`, margin + 5, y + 26);
+    doc.text(`Dokumen B (Baru): ${aiReport.docBName}`, margin + 90, y + 26);
+    
+    y += 37;
+
+    // Add metrics counters summary
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(51, 65, 85);
+    doc.text(`Ringkasan Temuan: ${aiReport.summary.totalChanges} Perubahan Terdeteksi`, margin, y);
+    y += 5;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.text(`- Teks Ditambahkan: ${aiReport.summary.added}`, margin + 5, y);
+    doc.text(`- Klausul Dihapus: ${aiReport.summary.deleted}`, margin + 60, y);
+    doc.text(`- Aspek Diubah: ${aiReport.summary.modified}`, margin + 115, y);
+    y += 10;
+
+    // Sections
+    addHeader("1. Ringkasan Eksekutif");
+    addParagraph(aiReport.executiveSummary);
+
+    addHeader("2. Perubahan Penting");
+    addParagraph(aiReport.importantChanges);
+
+    addHeader("3. Analisa Model Risiko");
+    
+    if (aiReport.contractRisks) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(220, 38, 38); // Red-600
+      checkPageBreak(8);
+      doc.text("Risiko Kontrak:", margin, y);
+      y += 4;
+      addParagraph(aiReport.contractRisks);
+    }
+
+    if (aiReport.financialRisks) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(234, 88, 12); // Orange-600
+      checkPageBreak(8);
+      doc.text("Risiko Keuangan:", margin, y);
+      y += 4;
+      addParagraph(aiReport.financialRisks);
+    }
+
+    if (aiReport.scheduleRisks) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(217, 119, 6); // Amber-600
+      checkPageBreak(8);
+      doc.text("Risiko Jadwal:", margin, y);
+      y += 4;
+      addParagraph(aiReport.scheduleRisks);
+    }
+
+    if (aiReport.legalRisks) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(124, 58, 237); // Violet-600
+      checkPageBreak(8);
+      doc.text("Risiko Hukum:", margin, y);
+      y += 4;
+      addParagraph(aiReport.legalRisks);
+    }
+
+    if (aiReport.operationalRisks) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(71, 85, 105); // Slate-600
+      checkPageBreak(8);
+      doc.text("Risiko Operasional & SOP:", margin, y);
+      y += 4;
+      addParagraph(aiReport.operationalRisks);
+    }
+
+    addHeader("4. Rekomendasi Tindakan AI");
+    addParagraph(aiReport.recommendationActions);
+
+    if (aiReport.recommendations && aiReport.recommendations.length > 0) {
+      addHeader("5. Daftar Rekomendasi Cepat");
+      aiReport.recommendations.forEach((rec) => {
+        addBullet(rec);
+      });
+      y += 4;
+    }
+
+    if (aiReport.changes && aiReport.changes.length > 0) {
+      addHeader("6. Detail Signatur Perubahan");
+      aiReport.changes.forEach((ch, idx) => {
+        checkPageBreak(25);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        doc.setTextColor(15, 23, 42);
+        doc.text(`${idx + 1}. Kategori: ${ch.category} (Risiko: ${ch.risk.toUpperCase()})`, margin, y);
+        y += 4;
+        
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.setTextColor(220, 38, 38); // red for old
+        const oldLines = doc.splitTextToSize(`Sebelumnya: ${ch.oldValue || "-"}`, contentWidth - 4);
+        oldLines.forEach((line: string) => {
+          checkPageBreak(4);
+          doc.text(line, margin + 4, y);
+          y += 4;
+        });
+
+        doc.setTextColor(22, 163, 74); // green for new
+        const newLines = doc.splitTextToSize(`Sesudahnya: ${ch.newValue || "-"}`, contentWidth - 4);
+        newLines.forEach((line: string) => {
+          checkPageBreak(4);
+          doc.text(line, margin + 4, y);
+          y += 4;
+        });
+        y += 2.5;
+      });
+    }
+
+    doc.save(`Laporan_Analisa_AI_${aiReport.docAName}_vs_${aiReport.docBName}.pdf`);
+  };
+
+  const handleExportExcel = () => {
+    if (!aiReport) return;
+    
+    // Tab 1: Ringkasan & Risiko
+    const summaryData = [
+      ["LAPORAN ANALISA PERBANDINGAN DOKUMEN AI"],
+      [],
+      ["METADATA LAPORAN"],
+      ["ID Proyek", aiReport.projectId],
+      ["Dokumen A (Lama)", aiReport.docAName],
+      ["Dokumen B (Baru)", aiReport.docBName],
+      ["Kategori", aiReport.category || "Umum"],
+      ["Tingkat Risiko Utama", aiReport.summary.riskLevel],
+      ["Tanggal Analisa", new Date(aiReport.timestamp || "").toLocaleString("id-ID")],
+      [],
+      ["RINGKASAN METRIKS"],
+      ["Total Deteksi Perubahan", aiReport.summary.totalChanges],
+      ["Ditambahkan", aiReport.summary.added],
+      ["Dihapus", aiReport.summary.deleted],
+      ["Diubah (Amended)", aiReport.summary.modified],
+      [],
+      ["ANALISA RISIKO & REKOMENDASI TINDAKAN"],
+      ["Ringkasan Eksekutif", aiReport.executiveSummary],
+      ["Perubahan Penting", aiReport.importantChanges],
+      ["Risiko Kontrak", aiReport.contractRisks || "-"],
+      ["Risiko Keuangan", aiReport.financialRisks || "-"],
+      ["Risiko Jadwal", aiReport.scheduleRisks || "-"],
+      ["Risiko Hukum", aiReport.legalRisks || "-"],
+      ["Risiko Operasional & SOP", aiReport.operationalRisks || "-"],
+      ["Rekomendasi Tindakan AI", aiReport.recommendationActions || "-"],
+    ];
+
+    // Tab 2: Perubahan Detail
+    const changesData = aiReport.changes.map((ch, index) => ({
+      "No": index + 1,
+      "Aspek/Kategori": ch.category,
+      "Tipe Perubahan": ch.type === "added" ? "Ditambahkan" : ch.type === "deleted" ? "Dihapus" : "Diubah (Amended)",
+      "Nilai Lama (Sebelumnya)": ch.oldValue || "-",
+      "Nilai Baru (Sesudahnya)": ch.newValue || "-",
+      "Tingkat Risiko": ch.risk.toUpperCase()
+    }));
+
+    // Create Work Book
+    const wb = XLSX.utils.book_new();
+
+    // Append sheets
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+    XLSX.utils.book_append_sheet(wb, wsSummary, "Ringkasan & Analisa Risiko");
+
+    const wsChanges = XLSX.utils.json_to_sheet(changesData);
+    XLSX.utils.book_append_sheet(wb, wsChanges, "Log Signatur Perubahan");
+
+    // Save Workbook
+    XLSX.writeFile(wb, `Laporan_Perbedaan_${aiReport.docAName}_vs_${aiReport.docBName}.xlsx`);
   };
 
   const handleExportWord = () => {
     if (!aiReport) return;
     const htmlContent = `
-      <html>
-      <head><style>body { font-family: sans-serif; }</style></head>
+      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+      <head>
+        <title>Laporan Hasil Analisa AI - DocCompare AI</title>
+        <!--[if gte mso 9]>
+        <xml>
+          <w:WordDocument>
+            <w:View>Print</w:View>
+            <w:Zoom>100</w:Zoom>
+          </w:WordDocument>
+        </xml>
+        <![endif]-->
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            font-size: 11pt;
+            line-height: 1.5;
+            color: #333333;
+            margin: 1in;
+          }
+          h1 {
+            color: #0f172a;
+            font-size: 18pt;
+            border-bottom: 2px solid #3b82f6;
+            padding-bottom: 6px;
+            margin-bottom: 20px;
+          }
+          h2 {
+            color: #1e293b;
+            font-size: 14pt;
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 4px;
+            margin-top: 25px;
+            margin-bottom: 12px;
+          }
+          h3 {
+            color: #334155;
+            font-size: 11pt;
+            margin-top: 15px;
+            margin-bottom: 5px;
+          }
+          .meta-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 25px;
+            background-color: #f8fafc;
+          }
+          .meta-table td {
+            padding: 8px 12px;
+            border: 1px solid #e2e8f0;
+            font-size: 10pt;
+          }
+          .meta-label {
+            font-weight: bold;
+            color: #475569;
+            width: 25%;
+          }
+          .risk-badge {
+            font-weight: bold;
+            color: #ffffff;
+            padding: 2px 6px;
+            background-color: #ef4444;
+            border-radius: 4px;
+          }
+          .changes-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            margin-bottom: 20px;
+          }
+          .changes-table th {
+            background-color: #1e293b;
+            color: #ffffff;
+            text-align: left;
+            padding: 10px;
+            font-size: 10pt;
+            font-weight: bold;
+            border: 1px solid #e2e8f0;
+          }
+          .changes-table td {
+            padding: 10px;
+            border: 1px solid #e2e8f0;
+            font-size: 9.5pt;
+          }
+          .deleted {
+            color: #b91c1c;
+          }
+          .added {
+            color: #15803d;
+          }
+          .modified {
+            color: #d97706;
+          }
+          .recommendation-box {
+            background-color: #1e293b;
+            color: #f8fafc;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+          }
+          .recommendation-title {
+            font-weight: bold;
+            font-size: 12pt;
+            color: #fbbf24;
+            margin-bottom: 8px;
+          }
+        </style>
+      </head>
       <body>
-        <h1>Laporan Hasil Analisa AI - DocCompare AI</h1>
-        <p>Proyek: #${aiReport.projectId}</p>
-        <p>Dokumen A: ${aiReport.docAName}</p>
-        <p>Dokumen B: ${aiReport.docBName}</p>
-        <p>Tanggal Analisa: ${new Date(aiReport.timestamp || "").toLocaleDateString()}</p>
-        <hr/>
+        <h1>LAPORAN ANALISA PERBANDINGAN DOKUMEN AI</h1>
+        <p style="font-size: 9pt; color: #64748b;">Dihasilkan secara otomatis oleh DocCompare AI pada ${new Date(aiReport.timestamp || "").toLocaleString("id-ID")}</p>
+        
+        <table class="meta-table">
+          <tr>
+            <td class="meta-label">Proyek Kerja</td>
+            <td>#${aiReport.projectId}</td>
+            <td class="meta-label">Kategori</td>
+            <td>${aiReport.category || "Umum"}</td>
+          </tr>
+          <tr>
+            <td class="meta-label">Dokumen Lama (A)</td>
+            <td>${aiReport.docAName}</td>
+            <td class="meta-label">Dokumen Baru (B)</td>
+            <td>${aiReport.docBName}</td>
+          </tr>
+          <tr>
+            <td class="meta-label">Tingkat Risiko Utama</td>
+            <td><span class="risk-badge" style="background-color: ${aiReport.summary.riskLevel.toLowerCase() === 'high' || aiReport.summary.riskLevel.toLowerCase() === 'critical' ? '#ef4444' : aiReport.summary.riskLevel.toLowerCase() === 'medium' ? '#f59e0b' : '#10b981'}">${aiReport.summary.riskLevel.toUpperCase()}</span></td>
+            <td class="meta-label">Total Deteksi Perubahan</td>
+            <td><strong>${aiReport.summary.totalChanges} Perubahan</strong> (+${aiReport.summary.added} | -${aiReport.summary.deleted} | *${aiReport.summary.modified})</td>
+          </tr>
+        </table>
+
         <h2>1. Ringkasan Eksekutif</h2>
-        <p>${aiReport.executiveSummary}</p>
-        <h2>2. Perubahan Penting</h2>
-        <p>${aiReport.importantChanges}</p>
-        <h2>3. Risiko Kontrak</h2>
-        <p>${aiReport.contractRisks}</p>
-        <h2>4. Risiko Keuangan</h2>
-        <p>${aiReport.financialRisks}</p>
-        <h2>5. Risiko Jadwal</h2>
-        <p>${aiReport.scheduleRisks}</p>
-        <h2>6. Risiko Hukum</h2>
-        <p>${aiReport.legalRisks}</p>
-        <h2>7. Risiko Operasional</h2>
-        <p>${aiReport.operationalRisks}</p>
-        <h2>8. Rekomendasi Tindakan</h2>
-        <p>${aiReport.recommendationActions}</p>
+        <p style="text-align: justify; white-space: pre-wrap;">${aiReport.executiveSummary}</p>
+
+        <h2>2. Perubahan Penting (Key Variations)</h2>
+        <p style="text-align: justify; white-space: pre-wrap;">${aiReport.importantChanges}</p>
+
+        <h2>3. Pemodelan Analisa Risiko Terpadu</h2>
+        
+        <h3>A. Risiko Kontrak</h3>
+        <p style="text-align: justify; color: #475569;">${aiReport.contractRisks || "Tidak ada risiko kontraktual yang terdeteksi secara parsial."}</p>
+        
+        <h3>B. Risiko Keuangan & Pengeluaran</h3>
+        <p style="text-align: justify; color: #475569;">${aiReport.financialRisks || "Tidak ada fluktuasi finansial atau biaya yang mencurigakan."}</p>
+        
+        <h3>C. Risiko Jadwal & Timeline</h3>
+        <p style="text-align: justify; color: #475569;">${aiReport.scheduleRisks || "Timeline dan jadwal serah-terima diidentifikasi tetap aman."}</p>
+        
+        <h3>D. Risiko Hukum & Klausula Legal</h3>
+        <p style="text-align: justify; color: #475569;">${aiReport.legalRisks || "Naskah tunduk penuh pada yurisdiksi regulasi yang sah."}</p>
+        
+        <h3>E. Risiko Operasional & Standar Prosedur Kerja (SOP)</h3>
+        <p style="text-align: justify; color: #475569;">${aiReport.operationalRisks || "Tidak ada diskrepansi langkah operasional yang beralih."}</p>
+
+        <div class="recommendation-box">
+          <div class="recommendation-title">&#9733; REKOMENDASI TINDAKAN UTAMA</div>
+          <p style="color: #cbd5e1; font-size: 10pt; line-height: 1.6; white-space: pre-wrap;">${aiReport.recommendationActions}</p>
+        </div>
+
+        <h2>4. Rekomendasi Cepat AI</h2>
+        <ul>
+          ${aiReport.recommendations.map(rec => `<li>${rec}</li>`).join('')}
+        </ul>
+
+        <h2>5. Signatur Log Perubahan Terperinci</h2>
+        <table class="changes-table">
+          <thead>
+            <tr>
+              <th style="width: 5%">No</th>
+              <th style="width: 25%">Aspek / Kategori</th>
+              <th style="width: 10%">Risiko</th>
+              <th style="width: 30%">Klausul Lama (Dokumen A)</th>
+              <th style="width: 30%">Klausul Baru (Dokumen B)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${aiReport.changes.map((ch, idx) => `
+              <tr>
+                <td>${idx + 1}</td>
+                <td><strong>${ch.category}</strong></td>
+                <td><span style="font-weight: bold; color: ${ch.risk.toLowerCase() === 'high' || ch.risk.toLowerCase() === 'critical' ? '#ef4444' : ch.risk.toLowerCase() === 'medium' ? '#d97706' : '#10b981'}">${ch.risk.toUpperCase()}</span></td>
+                <td class="deleted">${ch.oldValue || "-"}</td>
+                <td class="added">${ch.newValue || "-"}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
       </body>
       </html>
     `;
-    const blob = new Blob([htmlContent], { type: "application/msword" });
+    const blob = new Blob(['\ufeff' + htmlContent], { type: "application/msword" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `Laporan_Perbedaan_${aiReport.docAName}_vs_${aiReport.docBName}.doc`;
+    link.download = `Laporan_Analisa_AI_${aiReport.docAName}_vs_${aiReport.docBName}.doc`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -340,24 +756,30 @@ export default function ComparisonModule({
             </div>
 
             {/* Export and Print Group */}
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
-                onClick={handlePrint}
-                className="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
+                onClick={handleExportPDF}
+                className="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition shadow-sm"
               >
-                <Printer size={14} /> Cetak/PDF
+                <FileText size={14} className="text-red-500" /> Ekspor PDF
               </button>
               <button
-                onClick={handleExportCSV}
-                className="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
+                onClick={handleExportExcel}
+                className="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition shadow-sm"
               >
-                <Download size={14} /> Ekspor Excel
+                <Download size={14} className="text-emerald-600" /> Ekspor Excel
               </button>
               <button
                 onClick={handleExportWord}
-                className="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
+                className="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition shadow-sm"
               >
-                <FileText size={14} /> Ekspor Word
+                <FileText size={14} className="text-blue-600" /> Ekspor Word
+              </button>
+              <button
+                onClick={handlePrint}
+                className="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition shadow-sm"
+              >
+                <Printer size={14} className="text-slate-500" /> Cetak Halaman
               </button>
             </div>
           </div>
@@ -381,6 +803,157 @@ export default function ComparisonModule({
               <span className="text-2xl font-bold text-amber-600 block mt-1">{aiReport.summary.modified}</span>
             </div>
           </div>
+
+          {/* Visual Document Variance and Similarity Chart Card */}
+          {(() => {
+            const linesTotal = visualDiffs.length || 1;
+            const sameLinesCount = visualDiffs.filter((v) => v.type === "same").length;
+            const addedLinesCount = visualDiffs.filter((v) => v.type === "added").length;
+            const deletedLinesCount = visualDiffs.filter((v) => v.type === "deleted").length;
+            const modifiedLinesCount = visualDiffs.filter((v) => v.type === "modified").length;
+
+            const percentSame = Math.round((sameLinesCount / linesTotal) * 100);
+            const percentAdded = Math.round((addedLinesCount / linesTotal) * 100);
+            const percentDeleted = Math.round((deletedLinesCount / linesTotal) * 100);
+            const percentModified = Math.round((modifiedLinesCount / linesTotal) * 100);
+            const totalChangesCount = addedLinesCount + deletedLinesCount + modifiedLinesCount;
+            const percentChanged = Math.min(100, Math.round((totalChangesCount / linesTotal) * 100));
+            const similarityScore = 100 - percentChanged;
+
+            return (
+              <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                       <BarChart3 size={14} className="text-blue-600 animate-pulse" /> Ringkasan Analisa Volumetrik & Kemiripan Dokumen
+                    </h3>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Statistik segmentasi baris naskah lama versi <strong>{aiReport.docAName}</strong> vs baru versi <strong>{aiReport.docBName}</strong>.
+                    </p>
+                  </div>
+                  <div className="text-left sm:text-right">
+                    <span className="text-[10px] bg-slate-100 font-bold border border-slate-200 text-slate-700 px-2.5 py-1 rounded inline-block">
+                      Menganalisis {linesTotal} Baris Teks
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-6 pt-1 items-center">
+                  {/* Left Pane - Donut chart style representation */}
+                  <div className="md:col-span-4 flex flex-col items-center justify-center border-b md:border-b-0 md:border-r border-slate-150 pb-5 md:pb-0 md:pr-6">
+                    <div className="relative w-28 h-28 flex items-center justify-center">
+                      <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
+                        <path
+                          className="text-slate-100"
+                          strokeWidth="3.2"
+                          stroke="currentColor"
+                          fill="transparent"
+                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                        />
+                        <path
+                          className="text-blue-600 transition-all duration-1000 ease-out"
+                          strokeDasharray={`${similarityScore}, 100`}
+                          strokeWidth="3.2"
+                          strokeLinecap="round"
+                          stroke="currentColor"
+                          fill="transparent"
+                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                        />
+                      </svg>
+                      <div className="absolute text-center">
+                        <span className="text-2xl font-bold tracking-tight text-slate-900 block">{similarityScore}%</span>
+                        <span className="text-[8px] text-slate-400 font-bold uppercase tracking-wider block">Kemiripan</span>
+                      </div>
+                    </div>
+                    <div className="text-center mt-3 space-y-0.5">
+                      <p className="text-xs font-bold text-slate-705">Rasio Orisinalitas Kontrak</p>
+                      <p className="text-[10px] text-slate-500 font-medium">
+                        {similarityScore >= 90 ? "🟢 Sangat Serupa (Amandemen Ringan)" : similarityScore >= 70 ? "🟡 Perubahan Moderat" : "🔴 Revisi Total / Mayor"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Right Pane - Bar charts layout */}
+                  <div className="md:col-span-8 space-y-3.5">
+                    <div className="space-y-3">
+                      {/* 1. Unchanged Line Bar */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-slate-600 flex items-center gap-1.5">
+                            <span className="w-2.5 h-2.5 bg-slate-350 rounded-full"></span>
+                            Teks Tidak Berubah (Konsisten)
+                          </span>
+                          <span className="font-bold text-slate-800">{sameLinesCount} baris ({percentSame}%)</span>
+                        </div>
+                        <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                          <div 
+                            className="bg-slate-400 h-full rounded-full transition-all duration-700"
+                            style={{ width: `${percentSame}%` }}
+                          ></div>
+                        </div>
+                      </div>
+
+                      {/* 2. Added Line Bar */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-emerald-800 flex items-center gap-1.5">
+                            <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full"></span>
+                            Klausul Baru (Ditambahkan)
+                          </span>
+                          <span className="font-bold text-emerald-600">+{addedLinesCount} baris ({percentAdded}%)</span>
+                        </div>
+                        <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                          <div 
+                            className="bg-emerald-500 h-full rounded-full transition-all duration-700"
+                            style={{ width: `${percentAdded}%` }}
+                          ></div>
+                        </div>
+                      </div>
+
+                      {/* 3. Deleted Line Bar */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-rose-800 flex items-center gap-1.5">
+                            <span className="w-2.5 h-2.5 bg-rose-500 rounded-full"></span>
+                            Klausul Dihapus
+                          </span>
+                          <span className="font-bold text-rose-600">-{deletedLinesCount} baris ({percentDeleted}%)</span>
+                        </div>
+                        <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                          <div 
+                            className="bg-rose-500 h-full rounded-full transition-all duration-700"
+                            style={{ width: `${percentDeleted}%` }}
+                          ></div>
+                        </div>
+                      </div>
+
+                      {/* 4. Modified Line Bar */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-amber-800 flex items-center gap-1.5">
+                            <span className="w-2.5 h-2.5 bg-amber-500 rounded-full"></span>
+                            Amandemen Frasa (Dimodifikasi)
+                          </span>
+                          <span className="font-bold text-amber-600">{modifiedLinesCount} baris ({percentModified}%)</span>
+                        </div>
+                        <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                          <div 
+                            className="bg-amber-500 h-full rounded-full transition-all duration-700"
+                            style={{ width: `${percentModified}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-150 p-2.5 rounded-lg text-[10px] text-slate-500 leading-normal">
+                      <span className="font-bold text-blue-600 shrink-0">Petunjuk Teknis:</span>
+                      <span>Grafik volumetric di atas membandingkan jumlah baris perubahan naskah nyata secara real-time. Untuk visualisasi paragraf demi paragraf, klik tab <strong>Dokumen Bersebelahan</strong> di bawah ini.</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Toggle View Options */}
           <div className="flex border-b border-slate-200">
