@@ -7,9 +7,10 @@ import UploadModule from "./components/UploadModule";
 import ComparisonModule from "./components/ComparisonModule";
 import AuditTrail from "./components/AuditTrail";
 import Settings from "./components/Settings";
+import ChatAI from "./components/ChatAI";
 import { 
   Briefcase, FileText, Sparkles, ShieldCheck, Sliders, LayoutDashboard, 
-  Bell, Check, HelpCircle, User as UserIcon, AlertTriangle
+  Bell, Check, HelpCircle, User as UserIcon, AlertTriangle, MessageSquare
 } from "lucide-react";
 
 // Preseeded Data Generators for seamless instant evaluations
@@ -500,6 +501,18 @@ export default function App() {
             </button>
 
             <button
+              onClick={() => setCurrentTab("chat")}
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+                currentTab === "chat"
+                  ? "bg-slate-100 text-blue-700"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+              }`}
+              id="sidebar-chat-btn"
+            >
+              <MessageSquare size={16} /> Konsultasi AI (ChatAI)
+            </button>
+
+            <button
               onClick={() => setCurrentTab("audit")}
               className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
                 currentTab === "audit"
@@ -590,6 +603,14 @@ export default function App() {
               selectedReportFromDashboard={selectedReport}
               onClearSelectedReport={() => setSelectedReport(null)}
               onSaveReport={handleSaveReport}
+            />
+          )}
+
+          {currentTab === "chat" && (
+            <ChatAI
+              projects={projects}
+              documents={documents}
+              currentUserRole={currentUser.role}
             />
           )}
 
